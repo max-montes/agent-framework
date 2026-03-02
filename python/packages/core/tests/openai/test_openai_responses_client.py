@@ -2289,6 +2289,42 @@ async def test_prepare_options_store_parameter_handling() -> None:
     assert "previous_response_id" not in options
 
 
+async def test_prepare_options_strips_server_ids_when_store_false() -> None:
+    """When store=False, server-assigned IDs on reasoning and function_call items must be stripped.
+
+    These IDs reference server-side state that was never persisted, so replaying them
+    causes the API to reject the request (issue #4357).
+    """
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Build messages with reasoning and function_call content that carry server-assigned IDs
+    reasoning_content = Content(type="text_reasoning", text="thinking...")
+    reasoning_content.id = "rs_server_assigned_123"
+    function_call_content = Content(type="function_call", name="do_thing", arguments='{"a": 1}')
+    function_call_content.call_id = "call_abc"
+    function_call_content.id = "fc_server_assigned_456"
+
+    messages = [
+        Message(role="user", text="Hello"),
+        Message(role="assistant", contents=[reasoning_content, function_call_content]),
+    ]
+
+    # With store=False, IDs should be stripped
+    options = await client._prepare_options(messages, {"store": False, "model_id": "test-model"})  # type: ignore
+    for item in options["input"]:
+        if isinstance(item, dict) and item.get("type") in ("reasoning", "function_call"):
+            assert "id" not in item, f"Server-assigned ID should be stripped when store=False, got {item}"
+
+    # With store=True, IDs should be preserved
+    options = await client._prepare_options(messages, {"store": True, "model_id": "test-model"})  # type: ignore
+    reasoning_items = [i for i in options["input"] if isinstance(i, dict) and i.get("type") == "reasoning"]
+    function_call_items = [i for i in options["input"] if isinstance(i, dict) and i.get("type") == "function_call"]
+    if reasoning_items:
+        assert reasoning_items[0].get("id") is not None, "Reasoning ID should be preserved when store=True"
+    if function_call_items:
+        assert function_call_items[0].get("id") is not None, "Function call ID should be preserved when store=True"
+
+
 async def test_conversation_id_precedence_kwargs_over_options() -> None:
     """When both kwargs and options contain conversation_id, kwargs wins."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

@@ -852,6 +852,15 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         if response_format:
             run_options["text_format"] = response_format
 
+        # When store=False, strip server-assigned IDs from reasoning and function_call
+        # items. These IDs reference server-side state that was never persisted, so
+        # replaying them causes the API to reject the request with
+        # "Item with id 'rs_...' not found".
+        if run_options.get("store") is False and "input" in run_options:
+            for item in run_options["input"]:
+                if isinstance(item, dict) and item.get("type") in ("reasoning", "function_call"):
+                    item.pop("id", None)
+
         return run_options
 
     def _check_model_presence(self, options: dict[str, Any]) -> None:
